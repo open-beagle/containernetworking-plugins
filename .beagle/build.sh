@@ -14,3 +14,7 @@ tar zcvf dist/cni-plugins-linux-arm64.tgz -C bin/ .
 export GOARCH=ppc64le 
 ./build_linux.sh
 tar zcvf dist/cni-plugins-linux-ppc64le.tgz -C bin/ .
+
+export GOARCH=mips64le 
+./build_linux.sh
+tar zcvf dist/cni-plugins-linux-mips64le.tgz -C bin/ .
