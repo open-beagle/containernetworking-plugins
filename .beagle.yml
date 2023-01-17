@@ -6,6 +6,9 @@ volumes:
     host:
       path: /var/run/docker.sock
 
+clone:
+  disable: true
+  
 steps:
   - name: s3-cache
     image: registry.cn-qingdao.aliyuncs.com/wod/devops-s3-cache:1.0
