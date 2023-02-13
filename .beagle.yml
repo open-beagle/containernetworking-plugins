@@ -30,6 +30,8 @@ steps:
 
   - name: golang
     image: registry.cn-qingdao.aliyuncs.com/wod/golang:1.19-alpine 
+    environment:
+      CNI_VERSION: v1.2.0
     commands:
       - bash .beagle/build.sh
 
