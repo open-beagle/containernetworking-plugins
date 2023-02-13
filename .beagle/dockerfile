@@ -8,4 +8,4 @@ LABEL maintainer=${AUTHOR} version=${VERSION}
 ARG TARGETOS
 ARG TARGETARCH
 
-COPY dist/cni-plugins-$TARGETOS-$TARGETARCH/* /data/input
+COPY dist/cni-plugins-$TARGETOS-$TARGETARCH/* /data/input/
