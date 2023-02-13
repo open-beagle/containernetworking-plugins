@@ -5,16 +5,20 @@ mkdir -p dist
 set -ex
 export GOARCH=amd64 
 ./build_linux.sh
-tar zcvf dist/cni-plugins-linux-amd64.tgz -C bin/ .
+mkdir -p dist/cni-plugins-linux-$GOARCH
+mv bin/* dist/cni-plugins-linux-$GOARCH
 
 export GOARCH=arm64 
 ./build_linux.sh
-tar zcvf dist/cni-plugins-linux-arm64.tgz -C bin/ .
+mkdir -p dist/cni-plugins-linux-$GOARCH
+mv bin/* dist/cni-plugins-linux-$GOARCH
 
 export GOARCH=ppc64le 
 ./build_linux.sh
-tar zcvf dist/cni-plugins-linux-ppc64le.tgz -C bin/ .
+mkdir -p dist/cni-plugins-linux-$GOARCH
+mv bin/* dist/cni-plugins-linux-$GOARCH
 
 export GOARCH=mips64le 
 ./build_linux.sh
-tar zcvf dist/cni-plugins-linux-mips64le.tgz -C bin/ .
+mkdir -p dist/cni-plugins-linux-$GOARCH
+mv bin/* dist/cni-plugins-linux-$GOARCH
