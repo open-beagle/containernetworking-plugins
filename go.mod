@@ -14,7 +14,7 @@ require (
 	github.com/d2g/dhcp4server v0.0.0-20181031114812-7d4a0a7f59a5
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/mattn/go-shellwords v1.0.12
-	github.com/networkplumbing/go-nft v0.2.0
+	github.com/networkplumbing/go-nft v0.3.0
 	github.com/onsi/ginkgo v1.16.5
 	github.com/onsi/gomega v1.24.2
 	github.com/safchain/ethtool v0.2.0
