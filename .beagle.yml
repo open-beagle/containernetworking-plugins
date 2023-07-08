@@ -29,9 +29,9 @@ steps:
         from_secret: SOCKS5_PROXY
 
   - name: golang
-    image: registry.cn-qingdao.aliyuncs.com/wod/golang:1.19-alpine 
+    image: registry.cn-qingdao.aliyuncs.com/wod/golang:1.20-alpine 
     environment:
-      CNI_VERSION: v1.2.0
+      CNI_VERSION: v1.3.0
     commands:
       - bash .beagle/build.sh
 
@@ -44,7 +44,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry.cn-qingdao.aliyuncs.com/wod/alpine-data:3-amd64
       repo: wod/kube-cni-plugins
-      version: v1.2.0
+      version: v1.3.0
       channel: amd64
       args: 'TARGETOS=linux,TARGETARCH=amd64'
       registry: registry.cn-qingdao.aliyuncs.com
@@ -62,7 +62,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry.cn-qingdao.aliyuncs.com/wod/alpine-data:3-arm64
       repo: wod/kube-cni-plugins
-      version: v1.2.0
+      version: v1.3.0
       channel: arm64
       args: 'TARGETOS=linux,TARGETARCH=arm64'
       registry: registry.cn-qingdao.aliyuncs.com
@@ -80,7 +80,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry.cn-qingdao.aliyuncs.com/wod/alpine-data:3-ppc64le
       repo: wod/kube-cni-plugins
-      version: v1.2.0
+      version: v1.3.0
       channel: ppc64le
       args: 'TARGETOS=linux,TARGETARCH=ppc64le'
       registry: registry.cn-qingdao.aliyuncs.com
@@ -98,7 +98,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry.cn-qingdao.aliyuncs.com/wod/alpine-data:3-mips64le
       repo: wod/kube-cni-plugins
-      version: v1.2.0
+      version: v1.3.0
       channel: mips64le
       args: 'TARGETOS=linux,TARGETARCH=mips64le'
       registry: registry.cn-qingdao.aliyuncs.com
@@ -111,8 +111,8 @@ steps:
     image: registry.cn-qingdao.aliyuncs.com/wod/devops-docker-manifest:1.0
     settings:
       platforms: linux/amd64,linux/arm64,linux/ppc64le,linux/mips64le
-      template: registry.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.2.0-ARCH
-      target: registry.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.2.0
+      template: registry.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.3.0-ARCH
+      target: registry.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.3.0
       username:
         from_secret: REGISTRY_USER_ALIYUN
       password:

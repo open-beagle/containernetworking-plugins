@@ -7,7 +7,7 @@ git remote add upstream git@github.com:containernetworking/plugins.git
 
 git fetch upstream
 
-git merge v1.2.0
+git merge v1.3.0
 ```
 
 ## debug
@@ -18,7 +18,7 @@ docker run -it \
 --rm \
 -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
 -w /go/src/github.com/containernetworking/plugins/ \
-registry.cn-qingdao.aliyuncs.com/wod/golang:1.19-alpine \
+registry.cn-qingdao.aliyuncs.com/wod/golang:1.20-alpine \
 bash .beagle/build.sh
 ```
 
