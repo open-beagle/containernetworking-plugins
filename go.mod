@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	github.com/Microsoft/hcsshim v0.9.9
-	github.com/alexflint/go-filemutex v1.2.0
+	github.com/alexflint/go-filemutex v1.3.0
 	github.com/buger/jsonparser v1.1.1
 	github.com/containernetworking/cni v1.1.2
 	github.com/coreos/go-iptables v0.6.0
@@ -20,7 +20,7 @@ require (
 	github.com/opencontainers/selinux v1.11.0
 	github.com/safchain/ethtool v0.3.0
 	github.com/vishvananda/netlink v1.2.1-beta.2
-	golang.org/x/sys v0.7.0
+	golang.org/x/sys v0.16.0
 )
 
 require (
