@@ -18,7 +18,7 @@ docker run -it \
 --rm \
 -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
 -w /go/src/github.com/containernetworking/plugins/ \
-registry.cn-qingdao.aliyuncs.com/wod/golang:1.20-alpine \
+registry.cn-qingdao.aliyuncs.com/wod/golang:1.21-loongnix \
 bash .beagle/build.sh
 ```
 
