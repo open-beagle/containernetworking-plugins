@@ -18,9 +18,9 @@ require (
 	github.com/onsi/ginkgo/v2 v2.9.2
 	github.com/onsi/gomega v1.27.6
 	github.com/opencontainers/selinux v1.11.0
-	github.com/safchain/ethtool v0.3.0
+	github.com/safchain/ethtool v0.4.1
 	github.com/vishvananda/netlink v1.2.1-beta.2
-	golang.org/x/sys v0.7.0
+	golang.org/x/sys v0.21.0
 )
 
 require (
