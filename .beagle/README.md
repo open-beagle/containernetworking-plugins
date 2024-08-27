@@ -7,19 +7,31 @@ git remote add upstream git@github.com:containernetworking/plugins.git
 
 git fetch upstream
 
-git merge v1.3.0
+git merge v1.4.1
 ```
 
 ## debug
 
 ```bash
-# build
+# build cross
+docker pull registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22 && \
 docker run -it \
---rm \
--v $PWD/:/go/src/github.com/containernetworking/plugins/ \
--w /go/src/github.com/containernetworking/plugins/ \
-registry.cn-qingdao.aliyuncs.com/wod/golang:1.21-loongnix \
-bash .beagle/build.sh
+  --rm \
+  -e CNI_VERSION=v1.4.1 \
+  -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
+  -w /go/src/github.com/containernetworking/plugins/ \
+  registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22 \
+  bash .beagle/build.sh
+
+# build loong64
+docker pull registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22-loongnix && \
+docker run -it \
+  --rm \
+  -e CNI_VERSION=v1.4.1 \
+  -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
+  -w /go/src/github.com/containernetworking/plugins/ \
+  registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22-loongnix \
+  bash .beagle/build-loong64.sh
 ```
 
 ## cache
@@ -36,7 +48,7 @@ docker run --rm \
   -e PLUGIN_MOUNT=".git" \
   -v $(pwd):$(pwd) \
   -w $(pwd) \
-  registry.cn-qingdao.aliyuncs.com/wod/devops-s3-cache:1.0
+  registry-vpc.cn-qingdao.aliyuncs.com/wod/devops-s3-cache:1.0
 
 # 读取缓存-->将缓存从服务器拉取到本地
 docker run --rm \
@@ -48,5 +60,5 @@ docker run --rm \
   -e DRONE_REPO_NAME="containernetworking-plugins" \
   -v $(pwd):$(pwd) \
   -w $(pwd) \
-  registry.cn-qingdao.aliyuncs.com/wod/devops-s3-cache:1.0
+  registry-vpc.cn-qingdao.aliyuncs.com/wod/devops-s3-cache:1.0
 ```
