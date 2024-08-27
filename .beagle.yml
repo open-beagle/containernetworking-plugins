@@ -35,7 +35,7 @@ steps:
   - name: golang
     image: registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22
     environment:
-      CNI_VERSION: v1.4.1
+      CNI_VERSION: v1.5.1
     commands:
       - bash .beagle/build.sh
 
@@ -48,7 +48,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry-vpc.cn-qingdao.aliyuncs.com/wod/alpine:3-amd64
       repo: wod/kube-cni-plugins
-      version: v1.4.1
+      version: v1.5.1
       channel: amd64
       args: 'TARGETOS=linux,TARGETARCH=amd64'
       registry: registry-vpc.cn-qingdao.aliyuncs.com
@@ -66,7 +66,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry-vpc.cn-qingdao.aliyuncs.com/wod/alpine:3-arm64
       repo: wod/kube-cni-plugins
-      version: v1.4.1
+      version: v1.5.1
       channel: arm64
       args: 'TARGETOS=linux,TARGETARCH=arm64'
       registry: registry-vpc.cn-qingdao.aliyuncs.com
@@ -78,7 +78,7 @@ steps:
   - name: golang-loong64
     image: registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22-loongnix
     environment:
-      CNI_VERSION: v1.4.1
+      CNI_VERSION: v1.5.1
     commands:
       - bash .beagle/build-loong64.sh
 
@@ -91,7 +91,7 @@ steps:
       dockerfile: .beagle/dockerfile
       base: registry-vpc.cn-qingdao.aliyuncs.com/wod/alpine:3-amd64
       repo: wod/kube-cni-plugins
-      version: v1.4.1
+      version: v1.5.1
       channel: loong64
       args: 'TARGETOS=linux,TARGETARCH=loong64'
       registry: registry-vpc.cn-qingdao.aliyuncs.com
@@ -104,8 +104,8 @@ steps:
     image: registry-vpc.cn-qingdao.aliyuncs.com/wod/devops-docker-manifest:1.0
     settings:
       platforms: linux/amd64,linux/arm64,linux/loong64
-      template: registry-vpc.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.4.1-ARCH
-      target: registry-vpc.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.4.1
+      template: registry-vpc.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.5.1-ARCH
+      target: registry-vpc.cn-qingdao.aliyuncs.com/wod/kube-cni-plugins:v1.5.1
       username:
         from_secret: REGISTRY_USER_ALIYUN
       password:

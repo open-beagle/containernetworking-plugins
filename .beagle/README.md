@@ -7,7 +7,7 @@ git remote add upstream git@github.com:containernetworking/plugins.git
 
 git fetch upstream
 
-git merge v1.4.1
+git merge v1.5.1
 ```
 
 ## debug
@@ -17,7 +17,7 @@ git merge v1.4.1
 docker pull registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22 && \
 docker run -it \
   --rm \
-  -e CNI_VERSION=v1.4.1 \
+  -e CNI_VERSION=v1.5.1 \
   -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
   -w /go/src/github.com/containernetworking/plugins/ \
   registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22 \
@@ -27,7 +27,7 @@ docker run -it \
 docker pull registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22-loongnix && \
 docker run -it \
   --rm \
-  -e CNI_VERSION=v1.4.1 \
+  -e CNI_VERSION=v1.5.1 \
   -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
   -w /go/src/github.com/containernetworking/plugins/ \
   registry-vpc.cn-qingdao.aliyuncs.com/wod/golang:1.22-loongnix \
