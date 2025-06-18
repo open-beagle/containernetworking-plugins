@@ -14,13 +14,13 @@ git merge v1.7.1
 
 ```bash
 # build cross
-docker pull registry.cn-qingdao.aliyuncs.com/wod/golang:1.23-bookworm && \
+docker pull registry.cn-qingdao.aliyuncs.com/wod/golang:1.24-bookworm && \
 docker run -it \
   --rm \
-  -e CNI_VERSION=v1.7.1 \
+  -e BUILD_VERSION=v1.7.1 \
   -v $PWD/:/go/src/github.com/containernetworking/plugins/ \
   -w /go/src/github.com/containernetworking/plugins/ \
-  registry.cn-qingdao.aliyuncs.com/wod/golang:1.23-bookworm \
+  registry.cn-qingdao.aliyuncs.com/wod/golang:1.24-bookworm \
   bash .beagle/build.sh
 ```
 
