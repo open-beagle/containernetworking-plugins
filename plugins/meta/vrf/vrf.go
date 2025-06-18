@@ -17,13 +17,17 @@ package main
 import (
 	"fmt"
 	"math"
+	"net"
+	"time"
 
 	"github.com/vishvananda/netlink"
+
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 )
 
 // findVRF finds a VRF link with the provided name.
 func findVRF(name string) (*netlink.Vrf, error) {
-	link, err := netlink.LinkByName(name)
+	link, err := netlinksafe.LinkByName(name)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +40,7 @@ func findVRF(name string) (*netlink.Vrf, error) {
 
 // createVRF creates a new VRF and sets it up.
 func createVRF(name string, tableID uint32) (*netlink.Vrf, error) {
-	links, err := netlink.LinkList()
+	links, err := netlinksafe.LinkList()
 	if err != nil {
 		return nil, fmt.Errorf("createVRF: Failed to find links %v", err)
 	}
@@ -48,11 +52,11 @@ func createVRF(name string, tableID uint32) (*netlink.Vrf, error) {
 		}
 	}
 
+	linkAttrs := netlink.NewLinkAttrs()
+	linkAttrs.Name = name
 	vrf := &netlink.Vrf{
-		LinkAttrs: netlink.LinkAttrs{
-			Name: name,
-		},
-		Table: tableID,
+		LinkAttrs: linkAttrs,
+		Table:     tableID,
 	}
 
 	err = netlink.LinkAdd(vrf)
@@ -69,7 +73,7 @@ func createVRF(name string, tableID uint32) (*netlink.Vrf, error) {
 
 // assignedInterfaces returns the list of interfaces associated to the given vrf.
 func assignedInterfaces(vrf *netlink.Vrf) ([]netlink.Link, error) {
-	links, err := netlink.LinkList()
+	links, err := netlinksafe.LinkList()
 	if err != nil {
 		return nil, fmt.Errorf("getAssignedInterfaces: Failed to find links %v", err)
 	}
@@ -84,7 +88,7 @@ func assignedInterfaces(vrf *netlink.Vrf) ([]netlink.Link, error) {
 
 // addInterface adds the given interface to the VRF
 func addInterface(vrf *netlink.Vrf, intf string) error {
-	i, err := netlink.LinkByName(intf)
+	i, err := netlinksafe.LinkByName(intf)
 	if err != nil {
 		return fmt.Errorf("could not get link by name %s", intf)
 	}
@@ -97,12 +101,12 @@ func addInterface(vrf *netlink.Vrf, intf string) error {
 		return fmt.Errorf("interface %s has already a master set: %s", intf, master.Attrs().Name)
 	}
 
-	// IPV6 addresses are not maintained unless
+	// Global IPV6 addresses are not maintained unless
 	// sysctl -w net.ipv6.conf.all.keep_addr_on_down=1 is called
 	// so we save it, and restore it back.
-	beforeAddresses, err := netlink.AddrList(i, netlink.FAMILY_V6)
+	beforeAddresses, err := getGlobalAddresses(i, netlink.FAMILY_V6)
 	if err != nil {
-		return fmt.Errorf("failed getting ipv6 addresses for %s", intf)
+		return fmt.Errorf("failed getting global ipv6 addresses before slaving interface: %w", err)
 	}
 
 	// Save all routes that are not local and connected, before setting master,
@@ -112,9 +116,17 @@ func addInterface(vrf *netlink.Vrf, intf string) error {
 		Scope:     netlink.SCOPE_UNIVERSE, // Exclude local and connected routes
 	}
 	filterMask := netlink.RT_FILTER_OIF | netlink.RT_FILTER_SCOPE // Filter based on link index and scope
-	routes, err := netlink.RouteListFiltered(netlink.FAMILY_ALL, filter, filterMask)
+	r, err := netlinksafe.RouteListFiltered(netlink.FAMILY_ALL, filter, filterMask)
 	if err != nil {
 		return fmt.Errorf("failed getting all routes for %s", intf)
+	}
+
+	// Filter out connected IPV6 routes
+	globalRoutes := make([]netlink.Route, 0, len(r))
+	for _, route := range r {
+		if route.Src != nil {
+			globalRoutes = append(globalRoutes, route)
+		}
 	}
 
 	err = netlink.LinkSetMaster(i, vrf)
@@ -122,9 +134,10 @@ func addInterface(vrf *netlink.Vrf, intf string) error {
 		return fmt.Errorf("could not set vrf %s as master of %s: %v", vrf.Name, intf, err)
 	}
 
-	afterAddresses, err := netlink.AddrList(i, netlink.FAMILY_V6)
+	// Used to identify which global IPV6 addresses are missing
+	afterAddresses, err := getGlobalAddresses(i, netlink.FAMILY_V6)
 	if err != nil {
-		return fmt.Errorf("failed getting ipv6 new addresses for %s", intf)
+		return fmt.Errorf("failed getting global ipv6 addresses after slaving interface: %w", err)
 	}
 
 	// Since keeping the ipv6 address depends on net.ipv6.conf.all.keep_addr_on_down ,
@@ -141,10 +154,43 @@ CONTINUE:
 		if err != nil {
 			return fmt.Errorf("could not restore address %s to %s @ %s: %v", toFind, intf, vrf.Name, err)
 		}
+
+		// Waits for global IPV6 addresses to be added by the kernel.
+		backoffBase := 10 * time.Millisecond
+		maxRetries := 8
+		for retryCount := 0; retryCount <= maxRetries; retryCount++ {
+			routesVRFTable, err := netlinksafe.RouteListFiltered(
+				netlink.FAMILY_ALL,
+				&netlink.Route{
+					Dst: &net.IPNet{
+						IP:   toFind.IP,
+						Mask: net.IPMask{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+					},
+					Table:     int(vrf.Table),
+					LinkIndex: i.Attrs().Index,
+				},
+				netlink.RT_FILTER_OIF|netlink.RT_FILTER_TABLE|netlink.RT_FILTER_DST,
+			)
+			if err != nil {
+				return fmt.Errorf("failed getting routes for %s table %d for dst %s: %v", intf, vrf.Table, toFind.IPNet.String(), err)
+			}
+
+			if len(routesVRFTable) >= 1 {
+				break
+			}
+
+			if retryCount == maxRetries {
+				return fmt.Errorf("failed getting local/host addresses for %s in table %d with dst %s", intf, vrf.Table, toFind.IPNet.String())
+			}
+
+			// Exponential backoff - 10ms, 20m, 40ms, 80ms, 160ms, 320ms, 640ms, 1280ms
+			// Approx 2,5 seconds total
+			time.Sleep(backoffBase * time.Duration(1<<retryCount))
+		}
 	}
 
 	// Apply all saved routes for the interface that was moved to the VRF
-	for _, route := range routes {
+	for _, route := range globalRoutes {
 		r := route
 		// Modify original table to vrf one,
 		r.Table = int(vrf.Table)
@@ -175,7 +221,7 @@ func findFreeRoutingTableID(links []netlink.Link) (uint32, error) {
 }
 
 func resetMaster(interfaceName string) error {
-	intf, err := netlink.LinkByName(interfaceName)
+	intf, err := netlinksafe.LinkByName(interfaceName)
 	if err != nil {
 		return fmt.Errorf("resetMaster: could not get link by name %s", interfaceName)
 	}
@@ -184,4 +230,21 @@ func resetMaster(interfaceName string) error {
 		return fmt.Errorf("resetMaster: could reset master to %s", interfaceName)
 	}
 	return nil
+}
+
+// getGlobalAddresses returns the global addresses of the given interface
+func getGlobalAddresses(link netlink.Link, family int) ([]netlink.Addr, error) {
+	addresses, err := netlinksafe.AddrList(link, family)
+	if err != nil {
+		return nil, fmt.Errorf("failed getting list of IP addresses for %s: %w", link.Attrs().Name, err)
+	}
+
+	globalAddresses := make([]netlink.Addr, 0, len(addresses))
+	for _, addr := range addresses {
+		if addr.Scope == int(netlink.SCOPE_UNIVERSE) {
+			globalAddresses = append(globalAddresses, addr)
+		}
+	}
+
+	return globalAddresses, nil
 }

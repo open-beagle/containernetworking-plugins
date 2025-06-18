@@ -29,6 +29,7 @@ import (
 	types040 "github.com/containernetworking/cni/pkg/types/040"
 	current "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/cni/pkg/version"
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 )
@@ -36,9 +37,10 @@ import (
 func findChains(chains []string) (bool, bool) {
 	var foundAdmin, foundPriv bool
 	for _, ch := range chains {
-		if ch == "CNI-ADMIN" {
+		switch ch {
+		case "CNI-ADMIN":
 			foundAdmin = true
-		} else if ch == "CNI-FORWARD" {
+		case "CNI-FORWARD":
 			foundPriv = true
 		}
 	}
@@ -205,13 +207,13 @@ var _ = Describe("firewall plugin iptables backend", func() {
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
+			linkAttrs := netlink.NewLinkAttrs()
+			linkAttrs.Name = IFNAME
 			err = netlink.LinkAdd(&netlink.Dummy{
-				LinkAttrs: netlink.LinkAttrs{
-					Name: IFNAME,
-				},
+				LinkAttrs: linkAttrs,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			_, err = netlink.LinkByName(IFNAME)
+			_, err = netlinksafe.LinkByName(IFNAME)
 			Expect(err).NotTo(HaveOccurred())
 			return nil
 		})

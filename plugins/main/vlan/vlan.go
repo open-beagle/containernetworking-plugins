@@ -28,6 +28,7 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ipam"
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 )
@@ -82,11 +83,11 @@ func getMTUByName(ifName string, namespace string, inContainer bool) (int, error
 		defer netns.Close()
 
 		err = netns.Do(func(_ ns.NetNS) error {
-			link, err = netlink.LinkByName(ifName)
+			link, err = netlinksafe.LinkByName(ifName)
 			return err
 		})
 	} else {
-		link, err = netlink.LinkByName(ifName)
+		link, err = netlinksafe.LinkByName(ifName)
 	}
 	if err != nil {
 		return 0, err
@@ -101,11 +102,11 @@ func createVlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Interfac
 	var err error
 	if conf.LinkContNs {
 		err = netns.Do(func(_ ns.NetNS) error {
-			m, err = netlink.LinkByName(conf.Master)
+			m, err = netlinksafe.LinkByName(conf.Master)
 			return err
 		})
 	} else {
-		m, err = netlink.LinkByName(conf.Master)
+		m, err = netlinksafe.LinkByName(conf.Master)
 	}
 
 	if err != nil {
@@ -119,14 +120,15 @@ func createVlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Interfac
 		return nil, err
 	}
 
+	linkAttrs := netlink.NewLinkAttrs()
+	linkAttrs.MTU = conf.MTU
+	linkAttrs.Name = tmpName
+	linkAttrs.ParentIndex = m.Attrs().Index
+	linkAttrs.Namespace = netlink.NsFd(int(netns.Fd()))
+
 	v := &netlink.Vlan{
-		LinkAttrs: netlink.LinkAttrs{
-			MTU:         conf.MTU,
-			Name:        tmpName,
-			ParentIndex: m.Attrs().Index,
-			Namespace:   netlink.NsFd(int(netns.Fd())),
-		},
-		VlanId: conf.VlanID,
+		LinkAttrs: linkAttrs,
+		VlanId:    conf.VlanID,
 	}
 
 	if conf.LinkContNs {
@@ -148,7 +150,7 @@ func createVlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Interfac
 		vlan.Name = ifName
 
 		// Re-fetch interface to get all properties/attributes
-		contVlan, err := netlink.LinkByName(vlan.Name)
+		contVlan, err := netlinksafe.LinkByName(vlan.Name)
 		if err != nil {
 			return fmt.Errorf("failed to refetch vlan %q: %v", vlan.Name, err)
 		}
@@ -259,7 +261,13 @@ func cmdDel(args *skel.CmdArgs) error {
 }
 
 func main() {
-	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("vlan"))
+	skel.PluginMainFuncs(skel.CNIFuncs{
+		Add:    cmdAdd,
+		Check:  cmdCheck,
+		Del:    cmdDel,
+		Status: cmdStatus,
+		/* FIXME GC */
+	}, version.All, bv.BuildString("vlan"))
 }
 
 func cmdCheck(args *skel.CmdArgs) error {
@@ -310,11 +318,11 @@ func cmdCheck(args *skel.CmdArgs) error {
 
 	if conf.LinkContNs {
 		err = netns.Do(func(_ ns.NetNS) error {
-			_, err = netlink.LinkByName(conf.Master)
+			_, err = netlinksafe.LinkByName(conf.Master)
 			return err
 		})
 	} else {
-		_, err = netlink.LinkByName(conf.Master)
+		_, err = netlinksafe.LinkByName(conf.Master)
 	}
 
 	if err != nil {
@@ -354,7 +362,7 @@ func validateCniContainerInterface(intf current.Interface, vlanID int, mtu int) 
 	if intf.Name == "" {
 		return fmt.Errorf("Container interface name missing in prevResult: %v", intf.Name)
 	}
-	link, err = netlink.LinkByName(intf.Name)
+	link, err = netlinksafe.LinkByName(intf.Name)
 	if err != nil {
 		return fmt.Errorf("vlan: Container Interface name in prevResult: %s not found", intf.Name)
 	}
@@ -389,6 +397,21 @@ func validateCniContainerInterface(intf current.Interface, vlanID int, mtu int) 
 				intf.Name, mtu, link.Attrs().MTU)
 		}
 	}
+
+	return nil
+}
+
+func cmdStatus(args *skel.CmdArgs) error {
+	conf := NetConf{}
+	if err := json.Unmarshal(args.StdinData, &conf); err != nil {
+		return fmt.Errorf("failed to load netconf: %w", err)
+	}
+
+	if err := ipam.ExecStatus(conf.IPAM.Type, args.StdinData); err != nil {
+		return err
+	}
+
+	// TODO: Check if master interface exists.
 
 	return nil
 }

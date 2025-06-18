@@ -64,6 +64,13 @@ const (
 	// IngressPolicySameBridge executes `iptables` regardless to the value of `Backend`.
 	// IngressPolicySameBridge may not work as expected for non-bridge networks.
 	IngressPolicySameBridge IngressPolicy = "same-bridge"
+
+	// IngressPolicyIsolated ("isolated"): similar to ingress policy "same-bridge" with the exception
+	// that connections from the same bridge are also blocked.
+	// This is equivalent to Docker network option "enable_icc" when set to false.
+	// IngressPolicyIsolated executes `iptables` regardless to the value of `Backend`.
+	// IngressPolicyIsolated may not work as expected for non-bridge networks.
+	IngressPolicyIsolated IngressPolicy = "isolated"
 )
 
 type FirewallBackend interface {
@@ -179,7 +186,13 @@ func cmdDel(args *skel.CmdArgs) error {
 }
 
 func main() {
-	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.VersionsStartingFrom("0.4.0"), bv.BuildString("firewall"))
+	skel.PluginMainFuncs(skel.CNIFuncs{
+		Add:   cmdAdd,
+		Check: cmdCheck,
+		Del:   cmdDel,
+		/* FIXME GC */
+		/* FIXME Status */
+	}, version.VersionsStartingFrom("0.4.0"), bv.BuildString("firewall"))
 }
 
 func cmdCheck(args *skel.CmdArgs) error {

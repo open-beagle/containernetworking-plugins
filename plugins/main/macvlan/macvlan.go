@@ -29,6 +29,7 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 	"github.com/containernetworking/plugins/pkg/ip"
 	"github.com/containernetworking/plugins/pkg/ipam"
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
@@ -41,6 +42,7 @@ type NetConf struct {
 	MTU        int    `json:"mtu"`
 	Mac        string `json:"mac,omitempty"`
 	LinkContNs bool   `json:"linkInContainer,omitempty"`
+	BcQueueLen uint32 `json:"bcqueuelen,omitempty"`
 
 	RuntimeConfig struct {
 		Mac string `json:"mac,omitempty"`
@@ -61,13 +63,13 @@ func init() {
 }
 
 func getDefaultRouteInterfaceName() (string, error) {
-	routeToDstIP, err := netlink.RouteList(nil, netlink.FAMILY_ALL)
+	routeToDstIP, err := netlinksafe.RouteList(nil, netlink.FAMILY_ALL)
 	if err != nil {
 		return "", err
 	}
 
 	for _, v := range routeToDstIP {
-		if v.Dst == nil {
+		if ip.IsIPNetZero(v.Dst) {
 			l, err := netlink.LinkByIndex(v.LinkIndex)
 			if err != nil {
 				return "", err
@@ -155,11 +157,11 @@ func getMTUByName(ifName string, namespace string, inContainer bool) (int, error
 		defer netns.Close()
 
 		err = netns.Do(func(_ ns.NetNS) error {
-			link, err = netlink.LinkByName(ifName)
+			link, err = netlinksafe.LinkByName(ifName)
 			return err
 		})
 	} else {
-		link, err = netlink.LinkByName(ifName)
+		link, err = netlinksafe.LinkByName(ifName)
 	}
 	if err != nil {
 		return 0, err
@@ -208,11 +210,11 @@ func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Inter
 	var m netlink.Link
 	if conf.LinkContNs {
 		err = netns.Do(func(_ ns.NetNS) error {
-			m, err = netlink.LinkByName(conf.Master)
+			m, err = netlinksafe.LinkByName(conf.Master)
 			return err
 		})
 	} else {
-		m, err = netlink.LinkByName(conf.Master)
+		m, err = netlinksafe.LinkByName(conf.Master)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup master %q: %v", conf.Master, err)
@@ -225,12 +227,11 @@ func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Inter
 		return nil, err
 	}
 
-	linkAttrs := netlink.LinkAttrs{
-		MTU:         conf.MTU,
-		Name:        tmpName,
-		ParentIndex: m.Attrs().Index,
-		Namespace:   netlink.NsFd(int(netns.Fd())),
-	}
+	linkAttrs := netlink.NewLinkAttrs()
+	linkAttrs.MTU = conf.MTU
+	linkAttrs.Name = tmpName
+	linkAttrs.ParentIndex = m.Attrs().Index
+	linkAttrs.Namespace = netlink.NsFd(int(netns.Fd()))
 
 	if conf.Mac != "" {
 		addr, err := net.ParseMAC(conf.Mac)
@@ -244,6 +245,8 @@ func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Inter
 		LinkAttrs: linkAttrs,
 		Mode:      mode,
 	}
+
+	mv.BCQueueLen = conf.BcQueueLen
 
 	if conf.LinkContNs {
 		err = netns.Do(func(_ ns.NetNS) error {
@@ -267,7 +270,7 @@ func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Inter
 		macvlan.Name = ifName
 
 		// Re-fetch macvlan to get all properties/attributes
-		contMacvlan, err := netlink.LinkByName(ifName)
+		contMacvlan, err := netlinksafe.LinkByName(ifName)
 		if err != nil {
 			return fmt.Errorf("failed to refetch macvlan %q: %v", ifName, err)
 		}
@@ -361,7 +364,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	} else {
 		// For L2 just change interface status to up
 		err = netns.Do(func(_ ns.NetNS) error {
-			macvlanInterfaceLink, err := netlink.LinkByName(args.IfName)
+			macvlanInterfaceLink, err := netlinksafe.LinkByName(args.IfName)
 			if err != nil {
 				return fmt.Errorf("failed to find interface name %q: %v", macvlanInterface.Name, err)
 			}
@@ -426,7 +429,13 @@ func cmdDel(args *skel.CmdArgs) error {
 }
 
 func main() {
-	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("macvlan"))
+	skel.PluginMainFuncs(skel.CNIFuncs{
+		Add:    cmdAdd,
+		Check:  cmdCheck,
+		Del:    cmdDel,
+		Status: cmdStatus,
+		/* FIXME GC */
+	}, version.All, bv.BuildString("macvlan"))
 }
 
 func cmdCheck(args *skel.CmdArgs) error {
@@ -483,11 +492,11 @@ func cmdCheck(args *skel.CmdArgs) error {
 
 	if n.LinkContNs {
 		err = netns.Do(func(_ ns.NetNS) error {
-			_, err = netlink.LinkByName(n.Master)
+			_, err = netlinksafe.LinkByName(n.Master)
 			return err
 		})
 	} else {
-		_, err = netlink.LinkByName(n.Master)
+		_, err = netlinksafe.LinkByName(n.Master)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to lookup master %q: %v", n.Master, err)
@@ -525,7 +534,7 @@ func validateCniContainerInterface(intf current.Interface, modeExpected string) 
 	if intf.Name == "" {
 		return fmt.Errorf("container interface name missing in prevResult: %v", intf.Name)
 	}
-	link, err = netlink.LinkByName(intf.Name)
+	link, err = netlinksafe.LinkByName(intf.Name)
 	if err != nil {
 		return fmt.Errorf("container Interface name in prevResult: %s not found", intf.Name)
 	}
@@ -559,6 +568,23 @@ func validateCniContainerInterface(intf current.Interface, modeExpected string) 
 			return fmt.Errorf("interface %s Mac %s doesn't match container Mac: %s", intf.Name, intf.Mac, link.Attrs().HardwareAddr)
 		}
 	}
+
+	return nil
+}
+
+func cmdStatus(args *skel.CmdArgs) error {
+	conf := NetConf{}
+	if err := json.Unmarshal(args.StdinData, &conf); err != nil {
+		return fmt.Errorf("failed to load netconf: %w", err)
+	}
+
+	if conf.IPAM.Type != "" {
+		if err := ipam.ExecStatus(conf.IPAM.Type, args.StdinData); err != nil {
+			return err
+		}
+	}
+
+	// TODO: Check if master interface exists.
 
 	return nil
 }

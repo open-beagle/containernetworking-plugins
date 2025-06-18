@@ -32,6 +32,7 @@ import (
 	types040 "github.com/containernetworking/cni/pkg/types/040"
 	types100 "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/containernetworking/cni/pkg/version"
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 )
@@ -218,7 +219,7 @@ func buildOneConfig(name, cniVersion string, orig *Net, prevResult types.Result)
 
 type tester interface {
 	expectInterfaces(result types.Result, name, mac, sandbox string)
-	expectDpdkInterfaceIP(result types.Result, ipAddress string)
+	expectDpdkInterfaceIP(result types.Result, name, sandbox, ipAddress string)
 }
 
 type testerBase struct{}
@@ -231,7 +232,7 @@ type (
 
 func newTesterByVersion(version string) tester {
 	switch {
-	case strings.HasPrefix(version, "1.0."):
+	case strings.HasPrefix(version, "1."):
 		return &testerV10x{}
 	case strings.HasPrefix(version, "0.4."):
 		return &testerV04x{}
@@ -256,11 +257,16 @@ func (t *testerV10x) expectInterfaces(result types.Result, name, mac, sandbox st
 	}))
 }
 
-func (t *testerV10x) expectDpdkInterfaceIP(result types.Result, ipAddress string) {
+func (t *testerV10x) expectDpdkInterfaceIP(result types.Result, name, sandbox, ipAddress string) {
 	// check that the result was sane
 	res, err := types100.NewResultFromResult(result)
 	Expect(err).NotTo(HaveOccurred())
-	Expect(res.Interfaces).To(BeEmpty())
+	Expect(res.Interfaces).To(Equal([]*types100.Interface{
+		{
+			Name:    name,
+			Sandbox: sandbox,
+		},
+	}))
 	Expect(res.IPs).To(HaveLen(1))
 	Expect(res.IPs[0].Address.String()).To(Equal(ipAddress))
 }
@@ -278,11 +284,16 @@ func (t *testerV04x) expectInterfaces(result types.Result, name, mac, sandbox st
 	}))
 }
 
-func (t *testerV04x) expectDpdkInterfaceIP(result types.Result, ipAddress string) {
+func (t *testerV04x) expectDpdkInterfaceIP(result types.Result, name, sandbox, ipAddress string) {
 	// check that the result was sane
 	res, err := types040.NewResultFromResult(result)
 	Expect(err).NotTo(HaveOccurred())
-	Expect(res.Interfaces).To(BeEmpty())
+	Expect(res.Interfaces).To(Equal([]*types040.Interface{
+		{
+			Name:    name,
+			Sandbox: sandbox,
+		},
+	}))
 	Expect(res.IPs).To(HaveLen(1))
 	Expect(res.IPs[0].Address.String()).To(Equal(ipAddress))
 }
@@ -300,11 +311,16 @@ func (t *testerV03x) expectInterfaces(result types.Result, name, mac, sandbox st
 	}))
 }
 
-func (t *testerV03x) expectDpdkInterfaceIP(result types.Result, ipAddress string) {
+func (t *testerV03x) expectDpdkInterfaceIP(result types.Result, name, sandbox, ipAddress string) {
 	// check that the result was sane
 	res, err := types040.NewResultFromResult(result)
 	Expect(err).NotTo(HaveOccurred())
-	Expect(res.Interfaces).To(BeEmpty())
+	Expect(res.Interfaces).To(Equal([]*types040.Interface{
+		{
+			Name:    name,
+			Sandbox: sandbox,
+		},
+	}))
 	Expect(res.IPs).To(HaveLen(1))
 	Expect(res.IPs[0].Address.String()).To(Equal(ipAddress))
 }
@@ -341,13 +357,13 @@ var _ = Describe("base functionality", func() {
 			// prepare ifname in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -362,6 +378,15 @@ var _ = Describe("base functionality", func() {
 				"type": "host-device",
 				"device": %q
 			}`, ver, ifname)
+
+			// if v1.1 or greater, call CmdStatus
+			if testutils.SpecVersionHasSTATUS(ver) {
+				err := testutils.CmdStatus(func() error {
+					return cmdStatus(&skel.CmdArgs{StdinData: []byte(conf)})
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
 			args := &skel.CmdArgs{
 				ContainerID: "dummy",
 				Netns:       targetNS.Path(),
@@ -384,7 +409,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -394,7 +419,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now NOT in the original namespace anymore
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).To(HaveOccurred())
 				return nil
 			})
@@ -407,7 +432,7 @@ var _ = Describe("base functionality", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				_, err = netlink.LinkByName(ifname)
+				_, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})
@@ -422,13 +447,13 @@ var _ = Describe("base functionality", func() {
 			// prepare host device in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -465,7 +490,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -475,7 +500,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now NOT in the original namespace anymore
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).To(HaveOccurred())
 				return nil
 			})
@@ -483,13 +508,13 @@ var _ = Describe("base functionality", func() {
 			// create another conflict host device with same name "dummy0"
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				conflictLink, err = netlink.LinkByName(ifname)
+				conflictLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(conflictLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -509,7 +534,7 @@ var _ = Describe("base functionality", func() {
 			// assert container interface "eth0" still exists in target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -537,7 +562,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now back in the original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})
@@ -589,7 +614,7 @@ var _ = Describe("base functionality", func() {
 
 			// check that the result was sane
 			t := newTesterByVersion(ver)
-			t.expectDpdkInterfaceIP(resI, targetIP)
+			t.expectDpdkInterfaceIP(resI, cniName, targetNS.Path(), targetIP)
 
 			// call CmdDel
 			_ = originalNS.Do(func(ns.NetNS) error {
@@ -608,13 +633,13 @@ var _ = Describe("base functionality", func() {
 			// prepare ifname in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -660,13 +685,13 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
 
 				// get the IP address of the interface in the target namespace
-				addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+				addrs, err := netlinksafe.AddrList(link, netlink.FAMILY_V4)
 				Expect(err).NotTo(HaveOccurred())
 				addr := addrs[0].IPNet.String()
 				// assert that IP address is what we set
@@ -678,7 +703,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now NOT in the original namespace anymore
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).To(HaveOccurred())
 				return nil
 			})
@@ -691,7 +716,7 @@ var _ = Describe("base functionality", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})
@@ -720,13 +745,13 @@ var _ = Describe("base functionality", func() {
 			// prepare ifname in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -763,7 +788,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -773,7 +798,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now NOT in the original namespace anymore
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).To(HaveOccurred())
 				return nil
 			})
@@ -809,7 +834,7 @@ var _ = Describe("base functionality", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})
@@ -861,7 +886,7 @@ var _ = Describe("base functionality", func() {
 
 			// check that the result was sane
 			t := newTesterByVersion(ver)
-			t.expectDpdkInterfaceIP(resI, targetIP)
+			t.expectDpdkInterfaceIP(resI, cniName, targetNS.Path(), targetIP)
 
 			// call CmdCheck
 			n := &Net{}
@@ -912,13 +937,13 @@ var _ = Describe("base functionality", func() {
 			// prepare ifname in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -969,13 +994,13 @@ var _ = Describe("base functionality", func() {
 			// prepare ifname in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -1021,13 +1046,13 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
 
 				// get the IP address of the interface in the target namespace
-				addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+				addrs, err := netlinksafe.AddrList(link, netlink.FAMILY_V4)
 				Expect(err).NotTo(HaveOccurred())
 				addr := addrs[0].IPNet.String()
 				// assert that IP address is what we set
@@ -1039,7 +1064,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now NOT in the original namespace anymore
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).To(HaveOccurred())
 				return nil
 			})
@@ -1078,7 +1103,7 @@ var _ = Describe("base functionality", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})
@@ -1093,13 +1118,13 @@ var _ = Describe("base functionality", func() {
 			// prepare host device in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(ifname)
+				origLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -1136,7 +1161,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -1146,7 +1171,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now NOT in the original namespace anymore
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).To(HaveOccurred())
 				return nil
 			})
@@ -1154,13 +1179,13 @@ var _ = Describe("base functionality", func() {
 			// create another conflict host device with same name "dummy0"
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = ifname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: ifname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				conflictLink, err = netlink.LinkByName(ifname)
+				conflictLink, err = netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(conflictLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -1180,7 +1205,7 @@ var _ = Describe("base functionality", func() {
 			// assert container interface "eth0" still exists in target namespace and is up
 			err = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -1209,7 +1234,7 @@ var _ = Describe("base functionality", func() {
 			// assert that dummy0 is now back in the original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(ifname)
+				_, err := netlinksafe.LinkByName(ifname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})
@@ -1227,13 +1252,13 @@ var _ = Describe("base functionality", func() {
 			// prepare host device in original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = hostIfname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: hostIfname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				origLink, err = netlink.LinkByName(hostIfname)
+				origLink, err = netlinksafe.LinkByName(hostIfname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(origLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -1243,13 +1268,13 @@ var _ = Describe("base functionality", func() {
 			// prepare device in container namespace with same name as host device
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
+				linkAttrs := netlink.NewLinkAttrs()
+				linkAttrs.Name = containerAdditionalIfname
 				err := netlink.LinkAdd(&netlink.Dummy{
-					LinkAttrs: netlink.LinkAttrs{
-						Name: containerAdditionalIfname,
-					},
+					LinkAttrs: linkAttrs,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				containerLink, err = netlink.LinkByName(containerAdditionalIfname)
+				containerLink, err = netlinksafe.LinkByName(containerAdditionalIfname)
 				Expect(err).NotTo(HaveOccurred())
 				err = netlink.LinkSetUp(containerLink)
 				Expect(err).NotTo(HaveOccurred())
@@ -1286,7 +1311,7 @@ var _ = Describe("base functionality", func() {
 			// assert that host device is now in the target namespace and is up
 			_ = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(cniName)
+				link, err := netlinksafe.LinkByName(cniName)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(origLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -1306,7 +1331,7 @@ var _ = Describe("base functionality", func() {
 			// assert container interface "eth0" still exists in target namespace and is up
 			err = targetNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				link, err := netlink.LinkByName(containerAdditionalIfname)
+				link, err := netlinksafe.LinkByName(containerAdditionalIfname)
 				Expect(err).NotTo(HaveOccurred())
 				Expect(link.Attrs().HardwareAddr).To(Equal(containerLink.Attrs().HardwareAddr))
 				Expect(link.Attrs().Flags & net.FlagUp).To(Equal(net.FlagUp))
@@ -1317,7 +1342,7 @@ var _ = Describe("base functionality", func() {
 			// assert that host device is now back in the original namespace
 			_ = originalNS.Do(func(ns.NetNS) error {
 				defer GinkgoRecover()
-				_, err := netlink.LinkByName(hostIfname)
+				_, err := netlinksafe.LinkByName(hostIfname)
 				Expect(err).NotTo(HaveOccurred())
 				return nil
 			})

@@ -15,7 +15,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -31,11 +30,11 @@ import (
 	"github.com/onsi/gomega/gexec"
 	"github.com/vishvananda/netlink"
 
-	"github.com/containernetworking/cni/pkg/types"
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 )
 
-func TestHTB(t *testing.T) {
+func TestTBF(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "plugins/meta/bandwidth")
 }
@@ -108,13 +107,13 @@ func makeTCPClientInNS(netns string, address string, port int, numBytes int) {
 }
 
 func createVeth(hostNs ns.NetNS, hostVethIfName string, containerNs ns.NetNS, containerVethIfName string, hostIP []byte, containerIP []byte, hostIfaceMTU int) {
+	linkAttrs := netlink.NewLinkAttrs()
+	linkAttrs.Name = hostVethIfName
+	linkAttrs.Flags = net.FlagUp
+	linkAttrs.MTU = hostIfaceMTU
 	vethDeviceRequest := &netlink.Veth{
-		LinkAttrs: netlink.LinkAttrs{
-			Name:  hostVethIfName,
-			Flags: net.FlagUp,
-			MTU:   hostIfaceMTU,
-		},
-		PeerName: containerVethIfName,
+		LinkAttrs: linkAttrs,
+		PeerName:  containerVethIfName,
 	}
 
 	err := hostNs.Do(func(_ ns.NetNS) error {
@@ -122,7 +121,7 @@ func createVeth(hostNs ns.NetNS, hostVethIfName string, containerNs ns.NetNS, co
 			return fmt.Errorf("creating veth pair: %s", err)
 		}
 
-		containerVeth, err := netlink.LinkByName(containerVethIfName)
+		containerVeth, err := netlinksafe.LinkByName(containerVethIfName)
 		if err != nil {
 			return fmt.Errorf("failed to find newly-created veth device %q: %v", containerVethIfName, err)
 		}
@@ -148,7 +147,7 @@ func createVeth(hostNs ns.NetNS, hostVethIfName string, containerNs ns.NetNS, co
 		addr.Peer = peerAddr
 
 		addr.Scope = int(netlink.SCOPE_LINK)
-		hostVeth, err := netlink.LinkByName(hostVethIfName)
+		hostVeth, err := netlinksafe.LinkByName(hostVethIfName)
 		if err != nil {
 			return fmt.Errorf("failed to find newly-created veth device %q: %v", containerVethIfName, err)
 		}
@@ -179,7 +178,7 @@ func createVeth(hostNs ns.NetNS, hostVethIfName string, containerNs ns.NetNS, co
 		addr.Peer = peerAddr
 
 		addr.Scope = int(netlink.SCOPE_LINK)
-		containerVeth, err := netlink.LinkByName(containerVethIfName)
+		containerVeth, err := netlinksafe.LinkByName(containerVethIfName)
 		if err != nil {
 			return fmt.Errorf("failed to find newly-created veth device %q: %v", containerVethIfName, err)
 		}
@@ -195,12 +194,12 @@ func createVeth(hostNs ns.NetNS, hostVethIfName string, containerNs ns.NetNS, co
 }
 
 func createVethInOneNs(netNS ns.NetNS, vethName, peerName string) {
+	linkAttrs := netlink.NewLinkAttrs()
+	linkAttrs.Name = vethName
+	linkAttrs.Flags = net.FlagUp
 	vethDeviceRequest := &netlink.Veth{
-		LinkAttrs: netlink.LinkAttrs{
-			Name:  vethName,
-			Flags: net.FlagUp,
-		},
-		PeerName: peerName,
+		LinkAttrs: linkAttrs,
+		PeerName:  peerName,
 	}
 
 	err := netNS.Do(func(_ ns.NetNS) error {
@@ -208,7 +207,7 @@ func createVethInOneNs(netNS ns.NetNS, vethName, peerName string) {
 			return fmt.Errorf("failed to create veth pair: %v", err)
 		}
 
-		_, err := netlink.LinkByName(peerName)
+		_, err := netlinksafe.LinkByName(peerName)
 		if err != nil {
 			return fmt.Errorf("failed to find newly-created veth device %q: %v", peerName, err)
 		}
@@ -219,73 +218,29 @@ func createVethInOneNs(netNS ns.NetNS, vethName, peerName string) {
 
 func createMacvlan(netNS ns.NetNS, master, macvlanName string) {
 	err := netNS.Do(func(_ ns.NetNS) error {
-		m, err := netlink.LinkByName(master)
+		m, err := netlinksafe.LinkByName(master)
 		if err != nil {
 			return fmt.Errorf("failed to lookup master %q: %v", master, err)
 		}
 
+		linkAttrs := netlink.NewLinkAttrs()
+		linkAttrs.MTU = m.Attrs().MTU
+		linkAttrs.Name = macvlanName
+		linkAttrs.ParentIndex = m.Attrs().Index
 		macvlanDeviceRequest := &netlink.Macvlan{
-			LinkAttrs: netlink.LinkAttrs{
-				MTU:         m.Attrs().MTU,
-				Name:        macvlanName,
-				ParentIndex: m.Attrs().Index,
-			},
-			Mode: netlink.MACVLAN_MODE_BRIDGE,
+			LinkAttrs: linkAttrs,
+			Mode:      netlink.MACVLAN_MODE_BRIDGE,
 		}
 
 		if err = netlink.LinkAdd(macvlanDeviceRequest); err != nil {
 			return fmt.Errorf("failed to create macvlan device: %s", err)
 		}
 
-		_, err = netlink.LinkByName(macvlanName)
+		_, err = netlinksafe.LinkByName(macvlanName)
 		if err != nil {
 			return fmt.Errorf("failed to find newly-created macvlan device %q: %v", macvlanName, err)
 		}
 		return nil
 	})
 	Expect(err).NotTo(HaveOccurred())
-}
-
-func buildOneConfig(cniVersion string, orig *PluginConf, prevResult types.Result) ([]byte, error) {
-	var err error
-
-	inject := map[string]interface{}{
-		"name":       "myBWnet",
-		"cniVersion": cniVersion,
-	}
-	// Add previous plugin result
-	if prevResult != nil {
-		r, err := prevResult.GetAsVersion(cniVersion)
-		Expect(err).NotTo(HaveOccurred())
-		inject["prevResult"] = r
-	}
-
-	// Ensure every config uses the same name and version
-	config := make(map[string]interface{})
-
-	confBytes, err := json.Marshal(orig)
-	if err != nil {
-		return nil, err
-	}
-
-	err = json.Unmarshal(confBytes, &config)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal existing network bytes: %s", err)
-	}
-
-	for key, value := range inject {
-		config[key] = value
-	}
-
-	newBytes, err := json.Marshal(config)
-	if err != nil {
-		return nil, err
-	}
-
-	conf := &PluginConf{}
-	if err := json.Unmarshal(newBytes, &conf); err != nil {
-		return nil, fmt.Errorf("error parsing configuration: %s", err)
-	}
-
-	return newBytes, nil
 }

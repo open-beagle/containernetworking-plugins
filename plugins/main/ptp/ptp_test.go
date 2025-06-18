@@ -22,13 +22,13 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"github.com/vishvananda/netlink"
 
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
 	types020 "github.com/containernetworking/cni/pkg/types/020"
 	types040 "github.com/containernetworking/cni/pkg/types/040"
 	types100 "github.com/containernetworking/cni/pkg/types/100"
+	"github.com/containernetworking/plugins/pkg/netlinksafe"
 	"github.com/containernetworking/plugins/pkg/ns"
 	"github.com/containernetworking/plugins/pkg/testutils"
 	"github.com/containernetworking/plugins/plugins/ipam/host-local/backend/allocator"
@@ -39,6 +39,7 @@ type Net struct {
 	CNIVersion    string                 `json:"cniVersion"`
 	Type          string                 `json:"type,omitempty"`
 	IPMasq        bool                   `json:"ipMasq"`
+	IPMasqBackend *string                `json:"ipMasqBackend,omitempty"`
 	MTU           int                    `json:"mtu"`
 	IPAM          *allocator.IPAMConfig  `json:"ipam"`
 	DNS           types.DNS              `json:"dns"`
@@ -104,7 +105,7 @@ type (
 
 func newTesterByVersion(version string) tester {
 	switch {
-	case strings.HasPrefix(version, "1.0."):
+	case strings.HasPrefix(version, "1."):
 		return &testerV10x{}
 	case strings.HasPrefix(version, "0.4."):
 		return &testerV04x{}
@@ -249,6 +250,14 @@ var _ = Describe("ptp Operations", func() {
 			defer GinkgoRecover()
 
 			var err error
+			if testutils.SpecVersionHasSTATUS(cniVersion) {
+				By("Doing a cni STATUS")
+				err = testutils.CmdStatus(func() error {
+					return cmdStatus(args)
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
 			result, _, err = testutils.CmdAddWithArgs(args, func() error {
 				return cmdAdd(args)
 			})
@@ -266,7 +275,7 @@ var _ = Describe("ptp Operations", func() {
 		err = targetNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			link, err := netlink.LinkByName(IFNAME)
+			link, err := netlinksafe.LinkByName(IFNAME)
 			Expect(err).NotTo(HaveOccurred())
 			if mac != "" {
 				Expect(mac).To(Equal(link.Attrs().HardwareAddr.String()))
@@ -328,7 +337,7 @@ var _ = Describe("ptp Operations", func() {
 		err = targetNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			link, err := netlink.LinkByName(IFNAME)
+			link, err := netlinksafe.LinkByName(IFNAME)
 			Expect(err).To(HaveOccurred())
 			Expect(link).To(BeNil())
 			return nil
@@ -356,6 +365,62 @@ var _ = Describe("ptp Operations", func() {
 			    "name": "mynet",
 			    "type": "ptp",
 			    "ipMasq": true,
+			    "mtu": 5000,
+			    "ipam": {
+				"type": "host-local",
+				"subnet": "10.1.2.0/24",
+				"dataDir": "%s"
+			    },
+			    "dns": %s
+			}`, ver, dataDir, string(dnsConfBytes))
+
+			doTest(conf, ver, 1, dnsConf, targetNS)
+		})
+
+		It(fmt.Sprintf("[%s] configures and deconfigures a ptp link when specifying ipMasqBackend: iptables", ver), func() {
+			dnsConf := types.DNS{
+				Nameservers: []string{"10.1.2.123"},
+				Domain:      "some.domain.test",
+				Search:      []string{"search.test"},
+				Options:     []string{"option1:foo"},
+			}
+			dnsConfBytes, err := json.Marshal(dnsConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			conf := fmt.Sprintf(`{
+			    "cniVersion": "%s",
+			    "name": "mynet",
+			    "type": "ptp",
+			    "ipMasq": true,
+			    "ipMasqBackend": "iptables",
+			    "mtu": 5000,
+			    "ipam": {
+				"type": "host-local",
+				"subnet": "10.1.2.0/24",
+				"dataDir": "%s"
+			    },
+			    "dns": %s
+			}`, ver, dataDir, string(dnsConfBytes))
+
+			doTest(conf, ver, 1, dnsConf, targetNS)
+		})
+
+		It(fmt.Sprintf("[%s] configures and deconfigures a ptp link when specifying ipMasqBackend: nftables", ver), func() {
+			dnsConf := types.DNS{
+				Nameservers: []string{"10.1.2.123"},
+				Domain:      "some.domain.test",
+				Search:      []string{"search.test"},
+				Options:     []string{"option1:foo"},
+			}
+			dnsConfBytes, err := json.Marshal(dnsConf)
+			Expect(err).NotTo(HaveOccurred())
+
+			conf := fmt.Sprintf(`{
+			    "cniVersion": "%s",
+			    "name": "mynet",
+			    "type": "ptp",
+			    "ipMasq": true,
+			    "ipMasqBackend": "nftables",
 			    "mtu": 5000,
 			    "ipam": {
 				"type": "host-local",
